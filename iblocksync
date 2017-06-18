@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+import iblocksync, os, sys, threading
+
+def _askBoolean(message, default=None):
+    while True:
+        sys.stdout.write("{} [{}/{}] ".format(message, "Y" if default else "y", "N" if default is False else "n"))
+        sys.stdout.flush()
+
+        answer = sys.stdin.readline().lower()
+        if answer == "\n" and default is not None:
+            answer = "y\n" if default else "n\n"
+
+        if answer == "y\n":
+            break
+        elif answer == "n\n":
+            sys.exit(1)
+
+argumentParser, argumentGroups = iblocksync._getArgumentParser()
+argumentParser.usage = "%(prog)s [OPTION]... SOURCE TARGET"
+argumentParser.description = "Incrementally syncs a raw disk image from SOURCE to TARGET."
+argumentParser.epilog = ("You can manipulate the way how iblocksync communicates with its remote processes using "
+    + "env variables.  Pass the 'IBLOCKSYNC_SOURCE_EXEC' env variable to overwrite the command iblocksync executes on "
+    + "the source system (defaults to 'iblocksync-serve').  If your source image is on a remote system, you can also "
+    + "overwrite the command iblocksync uses to establish the connection using the 'IBLOCKSYNC_SOURCE_RSH' env variable "
+    + "(defaults to 'ssh').  This for example allows you to pass an identity file to ssh ('ssh -i ~/.ssh/id_dsa').  The "
+    + "same options apply to the target system:  Set 'IBLOCKSYNC_TARGET_EXEC' (defaults to 'iblocksync-receive') and/or "
+    + "'IBLOCKSYNC_TARGET_RSH' (defaults to 'ssh') respectively.")
+
+argumentGroups["args"].add_argument("source", metavar="SOURCE",
+    help="Path to the raw disk image to sync (i.e. the source image).  You can either specify a absolute path "
+        + "('/path/to/image'), a relative path ('path/to/image'), a scp remote path ('user@host:/path/to/image', "
+        + "'user@' being optional), or URL-style SSH paths ('ssh://user@host:port/path/to/image', both 'user@' "
+        + "and ':port' being optional).  URL-style paths are absolute by default, however, you can use "
+        + "'ssh://user@host:port/./path/to/image' to make them relative.  You can also specify paths "
+        + "relative to user's ('~/path/to/image') or other's home directory ('~other/path/to/image')")
+argumentGroups["args"].add_argument("target", metavar="TARGET",
+    help="Path to the raw disk image to sync to (i.e. the target image).  You can specify the same path syntax "
+        + "as for the source image (see above)")
+
+argumentGroups["app"].add_argument("-p", "--progress", dest="progress",
+    choices=[ "none", "dot", "full" ], default="full", metavar="PROGRESS",
+    help="Shows a simple progress bar.  The progress bar is disabled when verbosity was increased twice.  "
+        + "The following progress bar styles are supported: 'none', 'dot', 'full'. Defaults to 'full'")
+argumentGroups["app"].add_argument("-f", "--force", dest="force", action="store_true", default=False,
+    help="Ignore warnings, never prompt")
+argumentGroups["app"].add_argument("-v", "--verbose", dest="verbosity", action="count", default=0,
+    help="Explain what is being done (increase verbosity)")
+
+args = argumentParser.parse_args()
+
+try:
+    with iblocksync.LogStats(args.verbosity, args.progress, loggerName="iblocksync") as logStats:
+        logStats.init(args.source, args.target, args.blockSize, args.hashAlgorithm)
+
+        with iblocksync.ServeLocal(args.source, args.blockSize, args.hashAlgorithm, logStats=logStats) as server:
+            server.sendIdentifier()
+            server.checkImageInfo()
+
+            logStats.hitServer(server)
+
+            with iblocksync.ReceiveLocal(args.target, args.blockSize, args.hashAlgorithm, logStats=logStats) as receiver:
+                receiver.sendIdentifier()
+                receiver.checkImageInfo()
+
+                logStats.hitReceiver(receiver)
+
+                if not args.force:
+                    if server.imageInfo["fileSize"] > 0 and receiver.imageInfo["fileSize"] > 0:
+                        if server.imageInfo["fileSize"] != receiver.imageInfo["fileSize"]:
+                            _askBoolean("Source image is {}, target image {}; proceed?".format(
+                                iblocksync._formatBytes(server.imageInfo["fileSize"]),
+                                iblocksync._formatBytes(receiver.imageInfo["fileSize"])
+                            ), True)
+
+                    if server.imageInfo["uuid"] and receiver.imageInfo["uuid"]:
+                        if server.imageInfo["uuid"] != receiver.imageInfo["uuid"]:
+                            _askBoolean("Source UUID is {!r}, target UUID {!r}; proceed?".format(
+                                iblocksync._formatBytes(server.imageInfo["uuid"]),
+                                iblocksync._formatBytes(receiver.imageInfo["uuid"])
+                            ), True)
+
+                server.sendImageInfo(receiver.imageInfo)
+                receiver.sendImageInfo(server.imageInfo)
+
+                sourceBlockCount = -(- server.imageInfo["fileSize"] // server.imageInfo["blockSize"])
+                targetBlockCount = -(- receiver.imageInfo["fileSize"] // receiver.imageInfo["blockSize"])
+
+                server.prepare(receiver, sourceBlockCount, targetBlockCount)
+                receiver.prepare(server, sourceBlockCount, targetBlockCount)
+
+                logStats.startSync()
+
+                server.start()
+                receiver.start()
+
+                server.join()
+                receiver.join()
+
+                if not server.finished() or not receiver.finished():
+                    raise RuntimeError("Block synchronization stopped unexpectedly")
+
+                logStats.finishSync()
+                logStats.startUpdate()
+
+                for _ in range(server.differentBlockCount):
+                    blockIndex = logStats.startBlockUpdate()
+
+                    remoteBlock = server.readBlock()
+                    receiver.sendBlock(remoteBlock)
+
+                    logStats.endBlockUpdate(blockIndex)
+
+                server.readEndOfTransmission()
+                receiver.readEndOfTransmission()
+
+                logStats.finishUpdate()
+
+                server.wait()
+                receiver.wait()
+except iblocksync.RemoteProcessError as error:
+    sys.stderr.write(str(error))
+    sys.exit(1)
+except KeyboardInterrupt:
+    os._exit(1)

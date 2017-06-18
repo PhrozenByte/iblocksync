@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+import iblocksync, os, sys
+
+argumentParser, argumentGroups = iblocksync._getArgumentParser()
+argumentParser.usage = "%(prog)s [OPTION]... IMAGE"
+argumentParser.description = ("Starts a iblocksync server process to receive a raw disk image for syncing.  "
+    + "This command is usually not used manually.")
+
+argumentGroups["args"].add_argument("image", metavar="IMAGE", help="Path to the raw disk image to update")
+
+args = argumentParser.parse_args()
+
+try:
+    with iblocksync.ReceiveRemote(args.image, args.blockSize, args.hashAlgorithm) as receiver:
+        receiver.checkIdentifier()
+
+        try:
+            receiver.open()
+        except IOError as error:
+            receiver.sendError(error.strerror, error.errno)
+            sys.exit(1)
+
+        receiver.sendImageInfo()
+        sourceImageInfo = receiver.readImageInfo()
+
+        receiver.run(sourceImageInfo)
+except KeyboardInterrupt:
+    os._exit(1)
