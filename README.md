@@ -41,20 +41,22 @@ Arguments:
 Application options:
   -a HASH_ALGO, --algo HASH_ALGO
                         Gives the hash algorithm to work with. The following
-                        hash algorithms are supported: 'sha256', 'sha384',
-                        'sha512', 'sha1', 'sha224', 'md5'. Defaults to 'sha1'
+                        hash algorithms are supported: 'adler32', 'sha1',
+                        'sha224', 'sha256', 'sha512', 'sha384', 'md5',
+                        'crc32'. Defaults to 'sha1'
   -b BLOCK_SIZE, --block BLOCK_SIZE
                         Gives the block size to work with. A suffix of B for
                         bytes, K for kilobytes (1,024 bytes), M for megabytes
                         (1,024 * 1,024 bytes), G for gigabytes, T for
                         terabytes, P for petabytes or E for exabytes is
                         optional. Use kB/MB/GB/TB/PB/EB for base-10 units (1
-                        kB = 1,000 bytes, 1 MB = 1,000 * 1,000 bytes).
+                        kB = 1,000 bytes, 1 MB = 1,000 * 1,000 bytes, ...).
                         Defaults to 1M (1,048,576 bytes)
   -p PROGRESS, --progress PROGRESS
-                        Shows a simple progress bar. The following progress
-                        bar styles are supported: 'none', 'dot', 'full'.
-                        Defaults to 'full'
+                        Shows a simple progress bar. The progress bar is
+                        disabled when verbosity was increased twice. The
+                        following progress bar styles are supported: 'none',
+                        'dot', 'full'. Defaults to 'full'
   -f, --force           Ignore warnings, never prompt
   -v, --verbose         Explain what is being done (increase verbosity)
 
