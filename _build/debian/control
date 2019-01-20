@@ -1,0 +1,19 @@
+Source: iblocksync
+Section: python
+Priority: optional
+Maintainer: Daniel Rudolf <iblocksync@daniel-rudolf.de>
+Homepage: https://github.com/PhrozenByte/iblocksync
+Vcs-Browser: https://github.com/PhrozenByte/iblocksync
+Vcs-Git: https://github.com/PhrozenByte/iblocksync.git
+Build-Depends: dh-python, python3-all, debhelper (>= 9)
+X-Python3-Version: >= 3.2
+Standards-Version: 3.9.6
+
+Package: iblocksync
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends}, ${python3:Depends}
+Description: iblocksync incrementally syncs raw disk images.
+ iblocksync incrementally syncs raw disk images, possibly over remote networks.
+ .
+ It uses separate server processes for serving (i.e. reading) the source image and receiving (i.e. writing) the target image, allowing one to transparently read from and write to remote systems through SSH connections. Naturally it also supports syncing images on the local machine. iblocksync furthermore allows wrapping its remote processes, allowing one to do custom tasks before and after syncing, e.g. creating and removing LVM snapshots.
