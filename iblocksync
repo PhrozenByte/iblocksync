@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import iblocksync, os, sys, threading
+import iblocksync, os, sys
 
 def _askBoolean(message, default=None):
     while True:

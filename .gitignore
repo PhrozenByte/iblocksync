@@ -11,7 +11,7 @@ desktop.ini
 ._*
 
 # Python
-__pycache__/
+/__pycache__
 *.pyc
 
 # Python distutils

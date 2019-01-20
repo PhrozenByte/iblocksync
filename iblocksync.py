@@ -1,4 +1,4 @@
-import argparse, collections, hashlib, itertools, json, logging, os, re, shlex, struct, subprocess, sys, threading, time, zlib
+import argparse, collections, errno, hashlib, itertools, json, logging, os, re, shlex, struct, subprocess, sys, threading, time, zlib
 
 __version__ = "1.0.0"
 
@@ -196,7 +196,7 @@ class WritableBlockImage(ReadableBlockImage):
         try:
             self._io = open(self._filePath, "r+b")
         except IOError as error:
-            if error.errno == 2:
+            if error.errno == errno.ENOENT:
                 self._io = open(self._filePath, "w+b")
             else:
                 raise
