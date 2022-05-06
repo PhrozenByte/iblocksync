@@ -419,7 +419,10 @@ class ReceiveRemote(Remote):
                 remoteBlock = self._readBlock()
                 self.image.write(remoteBlock)
 
-        self.image.truncate()
+        try:
+            self.image.truncate()
+        except:
+            pass
         self.image.flush()
 
         self._sendEndOfTransmission()
