@@ -438,6 +438,8 @@ class ReceiveRemote(Remote):
                 remoteBlock = self._readBlock()
                 self.image.write(remoteBlock)
 
+        self._sendTruncationInfo(self.imageInfo["fileSize"] > sourceImageInfo["fileSize"])
+
         self.image.truncate()
         self.image.flush()
 
@@ -452,6 +454,10 @@ class ReceiveRemote(Remote):
             ))
 
         return block
+
+    def _sendTruncationInfo(self, truncate):
+        sys.stdout.buffer.write(_SIGNAL_ACK if truncate else _SIGNAL_NAK)
+        sys.stdout.buffer.flush()
 
 class Local(threading.Thread):
     _executable = None
@@ -711,6 +717,15 @@ class ReceiveLocal(Local):
         self._pipe.stdin.write(block)
         self._pipe.stdin.flush()
 
+    def readTruncationInfo(self):
+        signal = self._pipe.stdout.read(1)
+        if signal == _SIGNAL_ACK:
+            return True
+        elif signal == _SIGNAL_NAK:
+            return False
+        else:
+            raise ValueError("Expecting signal {!r} or {!r}, got {!r}".format(_SIGNAL_ACK, _SIGNAL_NAK, signal))
+
 class LogStats(threading.Thread):
     _STATE_IDLE = 0
     _STATE_SYNCING = 1
@@ -910,6 +925,9 @@ class LogStats(threading.Thread):
             sys.stdout.flush()
 
         self._logger.debug("Block #{} sent".format(blockIndex))
+
+    def truncateImage(self):
+        self._logger.info("Truncating target image...")
 
     def finishUpdate(self):
         if self._server.differentBlockCount > 0:

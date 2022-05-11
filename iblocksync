@@ -110,10 +110,13 @@ try:
 
                     logStats.endBlockUpdate(blockIndex)
 
+                logStats.finishUpdate()
+
+                if receiver.readTruncationInfo():
+                    logStats.truncateImage()
+
                 server.readEndOfTransmission()
                 receiver.readEndOfTransmission()
-
-                logStats.finishUpdate()
 
                 server.wait()
                 receiver.wait()
