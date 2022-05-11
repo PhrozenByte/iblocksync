@@ -137,16 +137,19 @@ class ReadableBlockImage(object):
             self._file.seek(0, os.SEEK_SET)
 
     def next(self):
+        if self._currentBlockIndex + 1 >= self.blockCount:
+            raise EOFError
+
         self._sync()
 
         self._currentBlock = self._file.read(self._blockSize)
         self._currentBlockHash = None
         self._currentBlockIndex += 1
 
-        if len(self._currentBlock) > 0:
-            return self.read()
-        else:
-            raise EOFError
+        if len(self._currentBlock) == 0:
+            raise RuntimeError("Unexpectedly reached end of file")
+
+        return self.read()
 
     def read(self):
         if self._currentBlock is None:
@@ -179,12 +182,15 @@ class ReadableBlockImage(object):
     def skip(self, blocks=1):
         if not blocks >= 1:
             raise ValueError("Block count must be >= 1")
-        if self._currentBlockIndex + 1 >= self.blockCount:
-            raise EOFError
 
         self._currentBlock = None
         self._currentBlockHash = None
-        self._currentBlockIndex = min(self._currentBlockIndex + blocks, self.blockCount)
+
+        if self._currentBlockIndex + blocks < self.blockCount:
+            self._currentBlockIndex = self._currentBlockIndex + blocks
+        else:
+            self._currentBlockIndex = self.blockCount - 1
+            raise EOFError
 
     def tell(self):
         return self._currentBlockIndex
@@ -226,7 +232,8 @@ class WritableBlockImage(ReadableBlockImage):
         bytesBlockCount = -(- bytesLength // self._blockSize)
 
         if bytesLength == 0:
-            self.truncate()
+            self._fileSize = self._file.tell()
+            self._blockCount = self._currentBlockIndex + 1
 
             self._currentBlock = None
             self._currentBlockHash = None
@@ -238,24 +245,22 @@ class WritableBlockImage(ReadableBlockImage):
         if lastBlockSize == 0:
             lastBlockSize = self._blockSize
 
-            self._fileSize = max(self.fileSize, (self._currentBlockIndex  + 1) * self._blockSize + bytesLength)
+            self._fileSize = max(self.fileSize, (self._currentBlockIndex + 1) * self._blockSize + bytesLength)
             self._blockCount = max(self.blockCount, self._currentBlockIndex + 1 + bytesBlockCount)
-
-            self._currentBlockIndex += bytesBlockCount
         else:
-            self._currentBlockIndex += bytesBlockCount
-            self.truncate()
+            self._fileSize = (self._currentBlockIndex + 1) * self._blockSize + bytesLength
+            self._blockCount = self._currentBlockIndex + 1 + bytesBlockCount
 
         self._currentBlock = bytes[-lastBlockSize:]
         self._currentBlockHash = None
+        self._currentBlockIndex += bytesBlockCount
 
     def seek(self, blocks=1):
         if not blocks >= 1:
             raise ValueError("Block count must be >= 1")
 
-        if self._currentBlockIndex + 1 >= self.blockCount:
-            self._sync()
-            if self._file.tell() % self._blockSize > 0:
+        if self._currentBlockIndex + blocks >= self.blockCount:
+            if self.fileSize % self._blockSize > 0:
                 raise RuntimeError("You must not seek over an incomplete block")
 
         self._fileSize = max(self.fileSize, (self._currentBlockIndex + 1 + blocks) * self._blockSize)
@@ -269,7 +274,7 @@ class WritableBlockImage(ReadableBlockImage):
         self._sync()
 
         self._fileSize = self._file.tell()
-        self._blockCount = None
+        self._blockCount = self._currentBlockIndex + 1
 
         if not self._blockDevice:
             self._file.truncate()
