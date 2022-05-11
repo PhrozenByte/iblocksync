@@ -1,4 +1,4 @@
-import argparse, collections, errno, hashlib, itertools, json, logging, os, re, shlex, struct, subprocess, sys, threading, time, zlib
+import argparse, collections, errno, hashlib, itertools, json, logging, os, re, shlex, stat, struct, subprocess, sys, threading, time, zlib
 
 __version__ = "1.0.0"
 
@@ -190,6 +190,11 @@ class ReadableBlockImage(object):
         return self._currentBlockIndex
 
 class WritableBlockImage(ReadableBlockImage):
+    @property
+    def _blockDevice(self):
+        mode = os.stat(self._filePath).st_mode
+        return stat.S_ISBLK(mode)
+
     def open(self):
         self.close()
 
@@ -263,10 +268,19 @@ class WritableBlockImage(ReadableBlockImage):
     def truncate(self):
         self._sync()
 
-        self._file.truncate()
-
         self._fileSize = self._file.tell()
         self._blockCount = None
+
+        if not self._blockDevice:
+            self._file.truncate()
+        else:
+            self._file.seek(0, os.SEEK_END)
+            blockDeviceSize = self._file.tell()
+
+            subsequentData = blockDeviceSize - self._fileSize
+            if subsequentData > 0:
+                self._file.seek(self._fileSize, os.SEEK_SET)
+                self._file.write(b'\0' * subsequentData)
 
     def flush(self):
         self._sync()
