@@ -1,6 +1,6 @@
 import argparse, collections, errno, hashlib, itertools, json, logging, os, re, shlex, stat, struct, subprocess, sys, threading, time, zlib
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 _SIGNAL_ACK = b'\x06'
 _SIGNAL_NAK = b'\x15'
@@ -1140,7 +1140,7 @@ def _getArgumentParser():
 
         def __call__(self, parser, namespace, values, option_string=None):
             print("iblocksync {}".format(self.version if self.version is not None else parser.version))
-            print("Copyright (C) 2017 Daniel Rudolf")
+            print("Copyright (C)  2017-2022 Daniel Rudolf")
             print("")
             print("License GPLv3: GNU GPL version 3 only <http://gnu.org/licenses/gpl.html>.")
             print("This is free software: you are free to change and redistribute it.")

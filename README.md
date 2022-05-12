@@ -79,7 +79,7 @@ respectively.
 License & Copyright
 -------------------
 
-Copyright (C) 2017-2019  Daniel Rudolf <http://www.daniel-rudolf.de/>
+Copyright (C) 2017-2022  Daniel Rudolf <http://www.daniel-rudolf.de/>
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3 of the License only.
 

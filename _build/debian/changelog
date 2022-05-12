@@ -1,3 +1,14 @@
+iblocksync (1.0.1-1) unstable; urgency=low
+
+  * [Fixed] #2: Don't attempt to truncate block devices.
+  * [Fixed] WritableBlockImage: Properly calculate file size while modifying an image.
+  * [Fixed] Allow syncing images with a non-divisible block size.
+  * [New] Add log message when truncating target image.
+  * [New] Improve error handling.
+
+ -- Daniel Rudolf <iblocksync@daniel-rudolf.de>  Thu, 12 May 2022 16:08:41 +0200
+
+
 iblocksync (1.0.0-1) unstable; urgency=low
 
   * Initial release.
