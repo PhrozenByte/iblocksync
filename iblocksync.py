@@ -294,6 +294,7 @@ class WritableBlockImage(ReadableBlockImage):
 
 class Remote(object):
     _image = None
+    _remoteImageInfo = None
 
     @property
     def image(self):
@@ -303,7 +304,7 @@ class Remote(object):
         return self._image
 
     @property
-    def imageInfo(self):
+    def _imageInfo(self):
         return {
             "blockSize": self.image.blockSize,
             "hashAlgorithm": self.image.hashAlgorithm,
@@ -318,27 +319,12 @@ class Remote(object):
     def __exit__(self, exc_type, exc_value, traceback):
         return self.close()
 
-    def __iter__(self):
-        if not self._image:
-            raise RuntimeException("{!r} is not iterable yet".format(self.__class__.__name__))
-
-        return self
-
-    def __next__(self):
-        try:
-            return self.next()
-        except EOFError:
-            raise StopIteration
-
     def open(self):
         self.image.open()
 
     def close(self):
         if self._image:
             self._image.close()
-
-    def next(self):
-        return self.image.next()
 
     def checkIdentifier(self):
         expectedIdentifier = "iblocksync {}\n".format(__version__)
@@ -356,27 +342,52 @@ class Remote(object):
         sys.stdout.buffer.flush()
 
     def sendImageInfo(self):
-        sys.stdout.buffer.write((json.dumps(self.imageInfo) + "\n").encode("utf-8"))
+        sys.stdout.buffer.write((json.dumps(self._imageInfo) + "\n").encode("utf-8"))
         sys.stdout.buffer.flush()
 
     def readImageInfo(self):
-        jsonString = sys.stdin.buffer.readline().decode("utf-8")
-        return json.loads(jsonString)
+        jsonString = sys.stdin.buffer.readline()
+
+        if len(jsonString) == 0:
+            raise ValueError("Failed to read image info")
+
+        self._remoteImageInfo = json.loads(jsonString.decode("utf-8"))
+
+        if self._remoteImageInfo["blockSize"] != self.image.blockSize:
+            raise ValueError("Expecting a block size of {:,} bytes, got {:,} bytes".format(
+                self._blockSize, self._imageInfo["blockSize"]
+            ))
+        elif self._remoteImageInfo["hashAlgorithm"] != self.image.hashAlgorithm:
+            raise ValueError("Expecting hash algorithm {}, got {}".format(
+                self._hashAlgorithm, self._imageInfo["hashAlgorithm"]
+            ))
+
+    def _imageDiff(self, sourceImageInfo, targetImageInfo):
+        sourceBlockCount = -(- sourceImageInfo["fileSize"] // sourceImageInfo["blockSize"])
+        targetBlockCount = -(- targetImageInfo["fileSize"] // targetImageInfo["blockSize"])
+        commonBlockCount = min(sourceBlockCount, targetBlockCount)
+
+        self._sendHashes(commonBlockCount)
+
+        blocks = self._readBlockUpdates(commonBlockCount)
+        blocksFiller = itertools.repeat(True, sourceBlockCount - commonBlockCount)
+
+        return itertools.chain(blocks, blocksFiller)
 
     def _sendHashes(self, blockCount):
-        for block, hash in itertools.islice(self, blockCount):
-            sys.stdout.buffer.write(hash)
+        for _, blockHash in itertools.islice(self.image, blockCount):
+            sys.stdout.buffer.write(blockHash)
 
         sys.stdout.buffer.flush()
 
         self.image.reset()
 
-    def _readBlocksToUpdate(self, blockCount):
-        blocksToUpdate = []
+    def _readBlockUpdates(self, blockCount):
+        blocks = []
         for blockIndex in range(blockCount):
-            blocksToUpdate.append(self._readSignal())
+            blocks.append(self._readSignal())
 
-        return blocksToUpdate
+        return blocks
 
     def _readSignal(self):
         signal = sys.stdin.buffer.read(1)
@@ -386,18 +397,6 @@ class Remote(object):
             return False
         else:
             raise ValueError("Expecting signal {!r} or {!r}, got {!r}".format(_SIGNAL_ACK, _SIGNAL_NAK, signal))
-
-    def _getBlocksToUpdate(self, sourceImageInfo, targetImageInfo):
-        sourceBlockCount = -(- sourceImageInfo["fileSize"] // sourceImageInfo["blockSize"])
-        targetBlockCount = -(- targetImageInfo["fileSize"] // targetImageInfo["blockSize"])
-        commonBlockCount = min(sourceBlockCount, targetBlockCount)
-
-        self._sendHashes(commonBlockCount)
-
-        blocksToUpdate = self._readBlocksToUpdate(commonBlockCount)
-        blocksToUpdateFiller = itertools.repeat(True, sourceBlockCount - commonBlockCount)
-
-        return itertools.chain(blocksToUpdate, blocksToUpdateFiller)
 
     def _sendEndOfTransmission(self):
         sys.stdout.buffer.write(_SIGNAL_EOT)
@@ -410,13 +409,13 @@ class ServeRemote(Remote):
     def __init__(self, imagePath, blockSize, hashAlgorithm):
         self._image = ReadableBlockImage(imagePath, blockSize, hashAlgorithm)
 
-    def run(self, targetImageInfo):
-        blocksToUpdate = self._getBlocksToUpdate(self.imageInfo, targetImageInfo)
+    def run(self):
+        blocks = self._imageDiff(self._imageInfo, self._remoteImageInfo)
 
-        for updateBlock in blocksToUpdate:
+        for updateBlock in blocks:
             if updateBlock:
-                localBlock, localHash = self.image.next()
-                sys.stdout.buffer.write(localBlock)
+                blockBytes, _ = self.image.next()
+                sys.stdout.buffer.write(blockBytes)
             else:
                 self.image.skip()
 
@@ -428,32 +427,40 @@ class ReceiveRemote(Remote):
     def __init__(self, imagePath, blockSize, hashAlgorithm):
         self._image = WritableBlockImage(imagePath, blockSize, hashAlgorithm)
 
-    def run(self, sourceImageInfo):
-        blocksToUpdate = self._getBlocksToUpdate(sourceImageInfo, self.imageInfo)
+    def run(self):
+        blocks = self._imageDiff(self._remoteImageInfo, self._imageInfo)
 
-        for updateBlock in blocksToUpdate:
+        for blockIndex, updateBlock in enumerate(blocks):
             self.image.seek()
 
             if updateBlock:
-                remoteBlock = self._readBlock()
-                self.image.write(remoteBlock)
+                blockBytes = self._readBlock(blockIndex)
+                self.image.write(blockBytes)
 
-        self._sendTruncationInfo(self.imageInfo["fileSize"] > sourceImageInfo["fileSize"])
+        self._sendTruncationInfo(self._imageInfo["fileSize"] > self._remoteImageInfo["fileSize"])
 
         self.image.truncate()
         self.image.flush()
 
         self._sendEndOfTransmission()
 
-    def _readBlock(self):
-        block = sys.stdin.buffer.read(self.image.blockSize)
-        blockSize = len(block)
-        if blockSize != self.image.blockSize:
+    def _readBlock(self, blockIndex):
+        blockSize = self._getBlockSize(blockIndex)
+        block = sys.stdin.buffer.read(blockSize)
+
+        if len(block) != blockSize:
             raise ValueError("Receiving invalid block, expecting {:,} bytes, got {:,} bytes".format(
-                self.image.blockSize, blockSize
+                blockSize, len(block)
             ))
 
         return block
+
+    def _getBlockSize(self, blockIndex):
+        blockCount = -(- self._remoteImageInfo["fileSize"] // self.image.blockSize)
+        if blockIndex + 1 < blockCount:
+            return self.image.blockSize
+        else:
+            return self._remoteImageInfo["fileSize"] % self.image.blockSize or self.image.blockSize
 
     def _sendTruncationInfo(self, truncate):
         sys.stdout.buffer.write(_SIGNAL_ACK if truncate else _SIGNAL_NAK)
@@ -474,7 +481,8 @@ class Local(threading.Thread):
 
     _hashList = None
     _commonBlockCount = None
-    _differentBlockCount = None
+    _additionalBlockCount = None
+    _differentBlocks = None
 
     _sync = None
     _syncBarrier = threading.Barrier(2)
@@ -538,8 +546,8 @@ class Local(threading.Thread):
         return self._commonBlockCount
 
     @property
-    def differentBlockCount(self):
-        return self._differentBlockCount
+    def differentBlocks(self):
+        return self._differentBlocks
 
     def __enter__(self):
         return self
@@ -589,7 +597,7 @@ class Local(threading.Thread):
         self._pipe.stdin.write("iblocksync {}\n".format(__version__).encode("utf-8"))
         self._pipe.stdin.flush()
 
-    def checkImageInfo(self):
+    def readImageInfo(self):
         jsonString = self._pipe.stdout.readline()
 
         if len(jsonString) == 0:
@@ -618,7 +626,8 @@ class Local(threading.Thread):
     def prepare(self, sync, sourceBlockCount, targetBlockCount):
         self._sync = sync
         self._commonBlockCount = min(sourceBlockCount, targetBlockCount)
-        self._differentBlockCount = sourceBlockCount - self._commonBlockCount
+        self._additionalBlockCount = sourceBlockCount - self._commonBlockCount
+        self._differentBlocks = []
 
     def run(self):
         try:
@@ -640,7 +649,12 @@ class Local(threading.Thread):
                 self._pipe.stdin.write(_SIGNAL_ACK if updateBlock else _SIGNAL_NAK)
 
                 if updateBlock:
-                    self._differentBlockCount += 1
+                    self._differentBlocks.append(blockIndex)
+
+            self._differentBlocks.extend(range(
+                self._commonBlockCount,
+                self._commonBlockCount + self._additionalBlockCount
+            ))
 
             self._pipe.stdin.flush()
             self._finished = True
@@ -689,15 +703,23 @@ class ServeLocal(Local):
 
         return super(ServeLocal, self).rsh
 
-    def readBlock(self):
-        block = self._pipe.stdout.read(self._blockSize)
-        blockSize = len(block)
-        if blockSize != self._blockSize:
+    def readBlock(self, blockIndex):
+        blockSize = self._getBlockSize(blockIndex)
+        block = self._pipe.stdout.read(blockSize)
+
+        if len(block) != blockSize:
             raise ValueError("Receiving invalid block, expecting {:,} bytes, got {:,} bytes".format(
-                self._blockSize, blockSize
+                blockSize, len(block)
             ))
 
         return block
+
+    def _getBlockSize(self, blockIndex):
+        blockCount = -(- self._imageInfo["fileSize"] // self._blockSize)
+        if blockIndex + 1 < blockCount:
+            return self._blockSize
+        else:
+            return self._imageInfo["fileSize"] % self._blockSize or self._blockSize
 
 class ReceiveLocal(Local):
     _executable = "iblocksync-receive"
@@ -713,7 +735,7 @@ class ReceiveLocal(Local):
 
         return super(ReceiveLocal, self).rsh
 
-    def sendBlock(self, block):
+    def sendBlock(self, blockIndex, block):
         self._pipe.stdin.write(block)
         self._pipe.stdin.flush()
 
@@ -896,26 +918,23 @@ class LogStats(threading.Thread):
 
     def startUpdate(self):
         message = "No blocks to transmit"
-        if self._server.differentBlockCount > 0:
+        if len(self._server.differentBlocks) > 0:
             self._set(LogStats._STATE_UPDATING)
 
             message = "Start transmitting {:,} of {:,} blocks ({})...".format(
-                self._server.differentBlockCount,
+                len(self._server.differentBlocks),
                 -(- self._server.imageInfo["fileSize"] // self._server.imageInfo["blockSize"]),
-                _formatBytes(self._server.differentBlockCount * self._server.imageInfo["blockSize"])
+                _formatBytes(len(self._server.differentBlocks) * self._server.imageInfo["blockSize"])
             )
 
         self._logger.info(message)
         if self._progress is not None and self._logger.getEffectiveLevel() > logging.INFO:
             print(message)
 
-    def startBlockUpdate(self):
-        blockIndex = len(self._updatedBlocks)
+    def startBlockUpdate(self, blockIndex):
         self._updatedBlocks[blockIndex] = [ time.time(), None ]
 
         self._logger.debug("Sending block #{}...".format(blockIndex))
-
-        return blockIndex
 
     def endBlockUpdate(self, blockIndex):
         self._updatedBlocks[blockIndex][1] = time.time()
@@ -930,7 +949,7 @@ class LogStats(threading.Thread):
         self._logger.info("Truncating target image...")
 
     def finishUpdate(self):
-        if self._server.differentBlockCount > 0:
+        if len(self._server.differentBlocks) > 0:
             self._progressUpdate()
             self._finishProgress()
 
@@ -974,7 +993,7 @@ class LogStats(threading.Thread):
         if self._progress == "full" and self._logger.getEffectiveLevel() > logging.DEBUG:
             self._printProgress("{:,} of {:,} blocks transmitted; {}/s".format(
                 len(self._updatedBlocks),
-                self._server.differentBlockCount,
+                len(self._server.differentBlocks),
                 _formatBytes(self._avgUpdates(self._server.imageInfo["blockSize"])[0])
             ))
 

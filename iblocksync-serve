@@ -21,8 +21,8 @@ try:
             sys.exit(1)
 
         server.sendImageInfo()
-        targetImageInfo = server.readImageInfo()
+        server.readImageInfo()
 
-        server.run(targetImageInfo)
+        server.run()
 except KeyboardInterrupt:
     os._exit(1)

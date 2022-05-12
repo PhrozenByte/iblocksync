@@ -54,24 +54,30 @@ try:
 
         with iblocksync.ServeLocal(args.source, args.blockSize, args.hashAlgorithm, logStats=logStats) as server:
             server.sendIdentifier()
-            server.checkImageInfo()
+            server.readImageInfo()
 
             logStats.hitServer(server)
 
             with iblocksync.ReceiveLocal(args.target, args.blockSize, args.hashAlgorithm, logStats=logStats) as receiver:
                 receiver.sendIdentifier()
-                receiver.checkImageInfo()
+                receiver.readImageInfo()
 
                 logStats.hitReceiver(receiver)
 
-                if not args.force:
-                    if server.imageInfo["fileSize"] > 0 and receiver.imageInfo["fileSize"] > 0:
-                        if server.imageInfo["fileSize"] != receiver.imageInfo["fileSize"]:
+                if server.imageInfo["fileSize"] > 0 and receiver.imageInfo["fileSize"] > 0:
+                    if server.imageInfo["fileSize"] != receiver.imageInfo["fileSize"]:
+                        sourceImageMisaligned = server.imageInfo["fileSize"] % server.imageInfo["blockSize"] > 0
+                        targetImageMisaligned = receiver.imageInfo["fileSize"] % receiver.imageInfo["blockSize"] > 0
+                        if sourceImageMisaligned or targetImageMisaligned:
+                            raise RuntimeError("Can't sync images of different sizes with a non-divisible block size")
+
+                        if not args.force:
                             _askBoolean("Source image is {}, target image {}; proceed?".format(
                                 iblocksync._formatBytes(server.imageInfo["fileSize"]),
                                 iblocksync._formatBytes(receiver.imageInfo["fileSize"])
                             ), True)
 
+                if not args.force:
                     if server.imageInfo["uuid"] and receiver.imageInfo["uuid"]:
                         if server.imageInfo["uuid"] != receiver.imageInfo["uuid"]:
                             _askBoolean("Source UUID is {!r}, target UUID {!r}; proceed?".format(
@@ -102,11 +108,11 @@ try:
                 logStats.finishSync()
                 logStats.startUpdate()
 
-                for _ in range(server.differentBlockCount):
-                    blockIndex = logStats.startBlockUpdate()
+                for blockIndex in server.differentBlocks:
+                    logStats.startBlockUpdate(blockIndex)
 
-                    remoteBlock = server.readBlock()
-                    receiver.sendBlock(remoteBlock)
+                    bytes = server.readBlock(blockIndex)
+                    receiver.sendBlock(blockIndex, bytes)
 
                     logStats.endBlockUpdate(blockIndex)
 

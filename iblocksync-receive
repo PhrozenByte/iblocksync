@@ -21,8 +21,8 @@ try:
             sys.exit(1)
 
         receiver.sendImageInfo()
-        sourceImageInfo = receiver.readImageInfo()
+        receiver.readImageInfo()
 
-        receiver.run(sourceImageInfo)
+        receiver.run()
 except KeyboardInterrupt:
     os._exit(1)
