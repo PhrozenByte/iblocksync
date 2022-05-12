@@ -449,8 +449,8 @@ class ReceiveRemote(Remote):
         block = sys.stdin.buffer.read(blockSize)
 
         if len(block) != blockSize:
-            raise ValueError("Receiving invalid block, expecting {:,} bytes, got {:,} bytes".format(
-                blockSize, len(block)
+            raise ValueError("Receiving invalid data of block #{}, expecting {:,} bytes, got {:,} bytes".format(
+                blockIndex, blockSize, len(block)
             ))
 
         return block
@@ -634,16 +634,16 @@ class Local(threading.Thread):
             self._hashList = []
             for blockIndex in range(self._commonBlockCount):
                 if self._logStats:
-                    self._logStats.hitBlockHash(blockIndex, self._executable)
+                    self._logStats.hitBlockHash(self._executable, blockIndex)
 
-                hash = self._readHash()
+                hash = self._readHash(blockIndex)
                 self._hashList.append(hash)
 
             self._syncBarrier.wait()
 
             for blockIndex in range(self._commonBlockCount):
                 if self._logStats:
-                    self._logStats.hitBlock(blockIndex, self._hashList[blockIndex], self._sync.hashList[blockIndex])
+                    self._logStats.hitBlock(self._executable, blockIndex, self._hashList[blockIndex], self._sync.hashList[blockIndex])
 
                 updateBlock = self._hashList[blockIndex] != self._sync.hashList[blockIndex]
                 self._pipe.stdin.write(_SIGNAL_ACK if updateBlock else _SIGNAL_NAK)
@@ -670,12 +670,12 @@ class Local(threading.Thread):
         if signal != _SIGNAL_EOT:
             raise ValueError("Expecting EOT signal ({!r}), got {!r}".format(_SIGNAL_EOT, signal))
 
-    def _readHash(self):
+    def _readHash(self, blockIndex):
         hash = self._pipe.stdout.read(self._hashSize)
         hashSize = len(hash)
         if hashSize != self._hashSize:
-            raise ValueError("Receiving invalid hash, expecting {:,} bytes, got {:,} bytes".format(
-                self._hashSize, hashSize
+            raise ValueError("Receiving invalid hash of block #{}, expecting {:,} bytes, got {:,} bytes".format(
+                blockIndex, self._hashSize, hashSize
             ))
 
         return hash
@@ -708,8 +708,8 @@ class ServeLocal(Local):
         block = self._pipe.stdout.read(blockSize)
 
         if len(block) != blockSize:
-            raise ValueError("Receiving invalid block, expecting {:,} bytes, got {:,} bytes".format(
-                blockSize, len(block)
+            raise ValueError("Receiving invalid data of block #{}, expecting {:,} bytes, got {:,} bytes".format(
+                blockIndex, blockSize, len(block)
             ))
 
         return block
@@ -873,7 +873,7 @@ class LogStats(threading.Thread):
         if self._progress is not None and self._logger.getEffectiveLevel() > logging.INFO:
             print(message)
 
-    def hitBlockHash(self, blockIndex, remote):
+    def hitBlockHash(self, remote, blockIndex):
         assert remote in ( "iblocksync-serve", "iblocksync-receive" )
         remote = "source" if remote == "iblocksync-serve" else "target"
 
@@ -886,8 +886,10 @@ class LogStats(threading.Thread):
 
         self._logger.debug("Receiving hash of {} block #{}...".format(remote, blockIndex))
 
-    def hitBlock(self, blockIndex, sourceHash, targetHash):
-        self._logger.debug("Comparing hash of block #{} ({!r} vs. {!r})...".format(blockIndex, sourceHash, targetHash))
+    def hitBlock(self, remote, blockIndex, sourceHash, targetHash):
+        self._logger.debug("Comparing hash of {} block #{} ({!r} vs. {!r})...".format(
+            "source" if remote == "iblocksync-serve" else "target", blockIndex, sourceHash, targetHash
+        ))
 
     def finishSync(self):
         if self._server.commonBlockCount > 0:
